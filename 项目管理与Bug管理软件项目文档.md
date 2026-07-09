@@ -257,7 +257,7 @@ AI 分析
 | `lang` | 扩展语言包 | 增加中文菜单和提示 |
 | `config` | 扩展配置 | AI 服务地址、开关、菜单配置 |
 | `css` / `js` | 扩展前端资源 | AI 面板交互、异步请求 |
-| `hook` | 在已有逻辑中插入代码 | 创建 Bug 后触发同步、文档更新后触发索引 |
+| `hook` | 在已有逻辑中插入代码 | 企业版或支持工作流 hook 的场景可用于保存后触发同步 |
 | `.api` | API 扩展 | 对外暴露 AI 相关接口 |
 
 ### 6.3 扩展目录示例
@@ -304,6 +304,30 @@ extension/custom/feedback/ext/control/classify.php
 - 异步任务队列。
 - 复杂报表和指标预计算。
 - 多租户模型权限和审计。
+
+### 6.6 Bug 和文档同步触发约束
+
+当前禅道代码支持通过 `extension/custom` 增加控制器方法和页面 hook，项目中已经有 Bug AI 扩展示例：
+
+```text
+extension/custom/bug/ext/control/aianalyze.php
+extension/custom/bug/ext/ui/view.ai.html.hook.php
+```
+
+因此可以新增 `bug-aiSync`、`doc-aiSync` 等扩展方法，用于同步 Bug 和文档到 AI 服务。
+
+需要注意：
+
+- Bug 创建、编辑、删除等流程中存在 `executeHooks` 调用，但 Open 版框架层会直接返回空结果，不能把 MVP 的自动同步依赖在该机制上。
+- 文档模块创建、编辑、删除流程没有同样稳定的 after hook 入口。
+- 覆盖 Bug/Doc 的 `create`、`edit`、`delete` 方法可以实现实时触发，但会增加禅道升级维护成本。
+
+MVP 推荐策略：
+
+- Bug 和文档详情页提供手动同步按钮。
+- AI 服务或禅道扩展提供定时增量补偿扫描。
+- 禅道只调用 AI 服务同步接口，不直接写向量数据库。
+- 实时自动触发作为第二阶段增强，在手动同步和补偿机制稳定后再实现。
 
 ## 7. AI 服务设计
 
@@ -371,19 +395,26 @@ POST /api/webhook/zentao
 
 优先级：
 
-1. 禅道 API。
-2. 禅道 Webhook。
-3. 数据库只读同步。
-4. 定时全量/增量扫描。
+1. 禅道扩展控制器主动调用 AI 服务。
+2. 禅道 API。
+3. 禅道 Webhook。
+4. 数据库只读同步。
+5. 定时全量/增量扫描。
 
 不建议 AI 服务直接写禅道核心表。写回禅道时优先通过 API 或禅道扩展控制器。
+
+MVP 同步方式：
+
+- Bug：`bug-aiSync` 手动同步 + 按 `openedDate`、`lastEditedDate`、`deleted` 定时补偿。
+- 文档：`doc-aiSync` 手动同步 + 按 `addedDate`、`editedDate`、`deleted` 定时补偿。
+- 保存后实时同步暂不作为强依赖，避免依赖 Open 版不可用的 `executeHooks` 或覆盖复杂控制器流程。
 
 ### 8.3 同步策略
 
 ```text
 创建数据
   ↓
-立即同步到 AI 服务
+手动同步或增量扫描同步到 AI 服务
 
 文本内容更新
   ↓
@@ -397,6 +428,8 @@ Webhook 丢失
   ↓
 定时任务补偿同步
 ```
+
+第二阶段如需要更实时的体验，再在禅道扩展中覆盖 Bug/Doc 的保存流程，在保存成功后调用 AI 服务同步接口，并保留定时补偿兜底。
 
 ## 9. 向量数据库设计
 

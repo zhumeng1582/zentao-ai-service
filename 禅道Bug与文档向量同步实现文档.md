@@ -248,7 +248,46 @@ zentaopms/extension/custom/doc/ext/css/view.ai.css
 
 如果禅道当前版本的扩展加载路径有差异，以实际 `extension/custom` 机制为准。实现前先用最小 hook 验证 Bug 详情页和文档详情页能插入按钮。
 
-### 4.2 禅道配置项
+### 4.2 当前禅道扩展机制确认
+
+当前禅道代码可以通过 `extension/custom` 增加模块扩展方法和页面 hook。
+
+已确认现有项目中已经存在 Bug AI 扩展示例：
+
+```text
+zentaopms/extension/custom/bug/ext/control/aianalyze.php
+zentaopms/extension/custom/bug/ext/ui/view.ai.html.hook.php
+```
+
+该示例说明：
+
+- 可以通过 `helper::importControl('bug')` 扩展 Bug 控制器。
+- 可以新增 `bug-aiAnalyze` 这类自定义控制器方法。
+- 可以通过 `ext/ui/*.hook.php` 在 Bug 详情页插入 AI 面板或按钮。
+
+因此后续可以按同样方式新增：
+
+```text
+bug-aiSync
+doc-aiSync
+```
+
+用于手动触发对象同步。
+
+需要注意：
+
+- Bug 控制器在创建、编辑、删除等流程中有 `executeHooks($bugID)` 调用。
+- 但框架层在 open edition 下会直接返回空字符串，因此不能把 Open 版自动同步依赖在 `executeHooks` 上。
+- Doc 控制器的创建、编辑、删除流程没有同样稳定的 `executeHooks` 入口。
+- 如果要做到保存后立即自动同步，需要使用扩展控制器覆盖对应方法，或者修改核心流程；这会增加禅道升级维护成本。
+
+基于以上限制，MVP 推荐采用：
+
+1. `bug-aiSync`、`doc-aiSync` 手动同步。
+2. AI 服务或禅道扩展提供定时增量扫描，按 `lastEditedDate`、`editedDate`、`deleted` 等字段补偿同步。
+3. 在手动同步和定时补偿稳定后，再评估是否覆盖 Bug/Doc 的 `create`、`edit`、`delete` 方法实现实时触发。
+
+### 4.3 禅道配置项
 
 配置项：
 
@@ -266,12 +305,12 @@ $config->aiService->timeout = 5;
 - 前端只调用禅道扩展控制器。
 - 禅道扩展控制器再调用 AI 服务。
 
-### 4.3 Bug 同步触发点
+### 4.4 Bug 同步触发点
 
 MVP 先做两种触发：
 
 1. Bug 详情页手动同步。
-2. Bug 创建/编辑后自动同步。
+2. 定时增量补偿同步。
 
 手动同步入口：
 
@@ -287,14 +326,28 @@ Bug 详情页
 - Bug 编辑成功后。
 - Bug 关闭、激活、删除等状态变化后。
 
-如果自动 hook 难度较高，第一版先用手动同步 + 定时补偿。
+实现策略：
 
-### 4.4 文档同步触发点
+- 第一版不依赖 `executeHooks`，因为 Open 版框架层不会执行实际 hook。
+- 第一版新增 `bug-aiSync` 控制器方法，供详情页按钮和后台任务调用。
+- 第一版新增 Bug 变更扫描能力，按 `openedDate`、`lastEditedDate`、`deleted` 找出待同步 Bug。
+- 第二版如需实时触发，再通过扩展覆盖 Bug `create`、`edit`、`delete`、`resolve`、`close`、`activate` 等方法，在父流程成功后调用同步接口。
+
+Bug 自动触发不要直接写 Qdrant。禅道只调用 AI 服务：
+
+```text
+Bug create/edit/delete/resolve/close/activate
+  -> 禅道扩展构造对象快照
+  -> POST /api/v1/sync/zentao/object
+  -> AI 服务异步写 PostgreSQL 和 Qdrant
+```
+
+### 4.5 文档同步触发点
 
 MVP 先做两种触发：
 
 1. 文档详情页手动同步。
-2. 文档创建/编辑后自动同步。
+2. 定时增量补偿同步。
 
 同步内容：
 
@@ -304,7 +357,16 @@ MVP 先做两种触发：
 - 附件列表。
 - 文档权限信息。
 
-### 4.5 禅道发送到 AI 服务的数据
+实现策略：
+
+- 第一版新增 `doc-aiSync` 控制器方法，供详情页按钮和后台任务调用。
+- 第一版新增文档变更扫描能力，按 `addedDate`、`editedDate`、`deleted` 找出待同步文档。
+- 文档模块没有和 Bug 一样稳定的 after hook 入口，不建议 MVP 覆盖完整 `create`、`edit`、`delete` 流程。
+- 第二版如必须实时同步，再评估扩展覆盖 Doc `create`、`edit`、`delete` 方法，并保留定时补偿兜底。
+
+文档自动触发同样不要直接写 Qdrant。禅道只负责发送对象快照和附件引用，AI 服务负责解析 HTML、下载附件、OCR、分段和向量化。
+
+### 4.6 禅道发送到 AI 服务的数据
 
 禅道扩展不要只发送对象 ID。建议发送对象快照，AI 服务也可以按需回调禅道补充附件。
 
