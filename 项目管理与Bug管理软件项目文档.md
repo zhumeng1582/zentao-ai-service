@@ -1206,6 +1206,25 @@ MVP 建议使用统一集合，通过 metadata 过滤租户：
 
 所有模型调用经过 `llm-gateway`，业务模块不得直接调用模型供应商。
 
+业务模块禁止直接调用 OpenAI、DeepSeek、通义、Azure 等供应商 SDK 或 HTTP API。`bug_ai`、`feedback_ai`、`doc_ai`、`project_ai` 只能调用 AI 服务内部统一接口。
+
+推荐调用链：
+
+```text
+业务模块
+  ↓
+modules/llm/gateway.py
+modules/embedding/gateway.py
+  ↓
+模型适配层
+  ↓
+OpenAI / DeepSeek / 通义 / Azure / 私有模型
+```
+
+MVP 推荐使用 `LiteLLM` 作为多模型适配层，业务层仍只依赖项目内部 gateway。后续如果替换为自研 adapter、LlamaIndex、LangChain 或私有模型网关，不影响业务模块。
+
+暂不建议第一版重度使用 LangChain。第一版优先保持链路可控：Qdrant 检索、权限过滤、Prompt 组装、模型调用和人工确认写回都由项目内 service 明确实现。
+
 模型配置归属：
 
 - 模型配置和基础调用放在独立 AI 服务。
@@ -1254,6 +1273,27 @@ llm.chat(
 )
 ```
 
+Embedding 统一调用接口：
+
+```python
+embedding.embed(
+    text=chunk.content,
+    model="default_embedding"
+)
+```
+
+图片理解统一调用接口：
+
+```python
+vision.describe(
+    image_bytes=image,
+    prompt="请描述这张 Bug 截图中的异常信息",
+    model="default_vision"
+)
+```
+
+MVP 可以先不启用视觉模型，只使用 OCR 生成 image chunk。
+
 要求：
 
 - 分类、优先级建议使用低温度：`temperature=0-0.3`。
@@ -1264,6 +1304,8 @@ llm.chat(
 - API Key 必须加密存储，日志不得输出明文密钥。
 - Embedding 模型和聊天模型分开配置，避免用聊天模型承担向量任务。
 - 图片理解能力可选，MVP 可先只做 OCR。
+- 模型切换只能影响模型配置或 adapter，不应要求修改业务模块代码。
+- 模型调用失败必须写入调用日志和任务错误状态。
 
 ### 16.10 Prompt 规范
 
