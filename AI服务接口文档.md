@@ -1,6 +1,6 @@
 # zentao-ai-service 接口文档
 
-版本：v1.3
+版本：v1.4
 
 日期：2026-07-10
 
@@ -16,6 +16,7 @@
 - 服务间鉴权和用户身份传递。
 - 禅道对象同步、索引、任务和失败重试。
 - Bug 相似检索和 AI 分析。
+- Bug、反馈提交前完整性校验和结果审计。
 - 文档摘要、单文档问答和项目知识问答。
 - 多轮聊天、会话管理和历史消息。
 - Bug、文档、需求等对象的相似内容推荐。
@@ -47,6 +48,7 @@
 | 索引 | 状态、重试、重建 | MVP |
 | 任务 | 查询异步任务 | MVP |
 | Bug | 相似 Bug、Bug AI 分析 | MVP |
+| 提交完整性校验 | Bug、反馈固定规则、AI 质量检查、结果审计 | MVP |
 | 文档 | 摘要、单文档问答 | MVP |
 | 项目知识问答 | 项目范围跨对象问答 | V1.1 |
 | 全局 AI 客服 | `help`、Bug、文档、反馈范围会话、消息、流式回答、历史消息 | MVP |
@@ -72,6 +74,8 @@
 | POST | `/api/v1/tasks/batch-get` | 对象读取权限 | MVP |
 | POST | `/api/v1/bugs/{bug_id}/similar` | `bug:similar` | MVP |
 | POST | `/api/v1/bugs/{bug_id}/analyze` | `bug:analyze` | MVP |
+| POST | `/api/v1/submission-validations` | `submission:validate` | MVP |
+| POST | `/api/v1/submission-validations/{validation_id}/outcome` | `submission:validate` | MVP |
 | POST | `/api/v1/docs/{doc_id}/summary` | `doc:summary` | MVP |
 | POST | `/api/v1/docs/{doc_id}/ask` | `doc:ask` | MVP |
 | POST | `/api/v1/projects/{project_id}/ask` | `project:ask` | V1.1 |
@@ -1568,6 +1572,19 @@ POST /api/ai/writeback
 | `50000` | `INTERNAL_ERROR` | 500 | 未分类内部错误 |
 | `50300` | `DEPENDENCY_UNAVAILABLE` | 503 | 关键依赖不可用 |
 
+### 19.5 提交完整性校验
+
+| code | error_code | HTTP | 说明 |
+| --- | --- | --- | --- |
+| `0` | `SUBMISSION_VALIDATION_BLOCKED` | 200 | 正常业务结果，通过 `data.decision=block` 返回固定硬规则或关键内容缺失 |
+| `40908` | `VALIDATION_CONTENT_CHANGED` | 409 | 最终提交内容与已校验内容不一致 |
+| `40909` | `VALIDATION_EXPIRED` | 409 | 校验结果已过期 |
+| `40910` | `VALIDATION_TEMPLATE_CHANGED` | 409 | 校验模板版本已变化 |
+| `40304` | `OVERRIDE_NOT_ALLOWED` | 403 | 当前用户没有强制提交权限 |
+| `42209` | `OVERRIDE_REASON_REQUIRED` | 422 | 强制提交未填写原因 |
+| `40911` | `VALIDATION_OUTCOME_CONFLICT` | 409 | 同一校验已经记录不同的终态结果 |
+| `0` | `SUBMISSION_VALIDATION_DEGRADED` | 200 | AI 未完成，已按固定规则降级，通过 `data.decision=degraded` 表示 |
+
 ## 20. 限流和超时
 
 默认建议值：
@@ -1634,12 +1651,13 @@ Retry-After: 30
 4. 实现禅道批量权限校验接口。
 5. 实现 Bug 相似检索。
 6. 实现单文档问答和引用。
-7. 实现 `help`、`bug`、`doc`、`feedback` 范围的 Conversation、历史消息和流式回答。
-8. 联调全局机器人入口、可信页面上下文和弹窗中断恢复。
-9. 实现 Bug AI 分析和 AI 结果查询。
-10. 实现采纳、驳回；写回先只支持添加评论。
-11. 补充失败重试、审计日志和限流。
-12. 在权限、幂等、乱序事件和模型失败场景全部通过后再扩展反馈、项目问答和项目周报。
+7. 实现 Bug、反馈提交固定规则、AI 完整性校验、内容哈希和降级策略。
+8. 实现 `help`、`bug`、`doc`、`feedback` 范围的 Conversation、历史消息和流式回答。
+9. 联调全局机器人入口、可信页面上下文和弹窗中断恢复。
+10. 实现 Bug AI 分析和 AI 结果查询。
+11. 实现采纳、驳回；写回先只支持添加评论。
+12. 补充失败重试、审计日志和限流。
+13. 在权限、幂等、乱序事件和模型失败场景全部通过后再扩展反馈分类、项目问答和项目周报。
 
 ## 24. MVP 验收检查
 
@@ -1654,6 +1672,9 @@ Retry-After: 30
 - 删除对象不再参与检索。
 - 相似 Bug 不返回当前 Bug 本身。
 - 文档问答无证据时明确返回 `insufficient_evidence=true`。
+- Bug、反馈提交校验返回 `pass/warn/block/degraded`，固定规则失败时不调用模型。
+- 表单内容哈希变化、校验过期或模板版本变化后，旧校验结果不能用于最终提交。
+- AI 校验失败时降级为固定规则结果，不能导致禅道表单内容丢失或核心提交不可用。
 - `help` 会话只能检索经过审核的平台帮助知识，不能返回项目业务数据。
 - Bug、文档、反馈会话连续追问不能扩大创建时的对象范围。
 - 流式中断后可以通过历史消息接口恢复最终状态。
@@ -2300,3 +2321,132 @@ conversation_summaries
 - 文档快捷问答和全局 AI 客服使用相同的权限、检索和会话实现。
 - V1.1 相似推荐支持 Bug、文档、需求和测试用例等目标类型。
 - V1.1 推荐结果不包含种子对象自身，未授权候选不会返回标题、摘要、链接或证据。
+
+## 26. Bug 与反馈提交完整性校验
+
+### 26.1 创建校验
+
+```http
+POST /api/v1/submission-validations
+```
+
+鉴权 Scope：`submission:validate`，阶段：MVP。
+
+```json
+{
+  "client_validation_id": "01JZVALCLIENT001",
+  "object_type": "bug",
+  "content_hash": "sha256:...",
+  "template_version": "bug-default-v1",
+  "fields": {
+    "title": "登录页面报错",
+    "steps": "1. 打开登录页\n2. 输入账号密码\n3. 点击登录",
+    "actual_result": "页面提示 403",
+    "expected_result": "登录成功并进入首页",
+    "environment": "固件 2.3.1",
+    "severity": "major"
+  },
+  "attachments": [
+    {
+      "client_file_id": "temp-file-01",
+      "file_name": "error.log",
+      "mime_type": "text/plain",
+      "size": 20480
+    }
+  ],
+  "context": {
+    "project_id": "8",
+    "product_id": "3",
+    "module_id": "12"
+  }
+}
+```
+
+规则：
+
+- `object_type` 首批只支持 `bug`、`feedback`。
+- 租户、用户、角色和可信项目范围由禅道服务端从当前登录态生成并签名。
+- `template_version` 是禅道服务端当前缓存的期望版本；AI 服务按租户、项目和对象类型选择已启用模板并比较，不能允许浏览器选择模板。
+- `content_hash` 是按对象模板对参与校验的规范化字段和附件元数据计算的 SHA-256；客户端展示值不能作为信任依据，MVP 不把未提交附件原文发送给模型。
+- `tenant_id + client_validation_id` 唯一，相同幂等键携带不同内容返回 `IDEMPOTENCY_KEY_CONFLICT`。
+- 固定规则失败时不调用模型。
+
+响应：
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "validation_id": "01JZVALIDATION001",
+    "object_type": "bug",
+    "content_hash": "sha256:...",
+    "template_version": "bug-default-v1",
+    "decision": "warn",
+    "score": 72,
+    "mode": "rules_and_ai",
+    "policy_mode": "warn",
+    "expires_at": "2026-07-10T12:05:00+08:00",
+    "issues": [
+      {
+        "code": "MISSING_REPRO_FREQUENCY",
+        "severity": "warning",
+        "field": "steps",
+        "message": "缺少问题复现频率",
+        "suggestion": "请说明每次出现、偶尔出现或目前仅出现一次"
+      }
+    ],
+    "follow_up_questions": [
+      "该问题每次登录都会出现吗？"
+    ]
+  }
+}
+```
+
+`issues[].severity` 支持 `error`、`warning`、`info`；`field` 必须引用当前模板允许的字段代码。未知字段按 `INVALID_MODEL_OUTPUT` 记录模型调用，并将本次提交校验降级为 `degraded`。
+
+`decision` 支持：
+
+| 值 | 说明 |
+| --- | --- |
+| `pass` | 达到最低质量要求，可直接提交 |
+| `warn` | 基本可处理，用户确认后可提交 |
+| `block` | 关键内容缺失，补充后重检或授权强制提交 |
+| `degraded` | AI 未完成，固定规则已通过，可提示后提交 |
+
+`policy_mode` 支持 `observe`、`warn`、`enforce`。`warn` 模式下固定硬规则仍可阻断，但 AI 推导的 `block` 降为 `warn`；试点默认使用 `warn`，验收后再切换 `enforce`。
+
+模型输出必须通过 JSON Schema；最终 `decision` 由服务端策略引擎根据固定规则、分数阈值和关键缺失项计算，不能直接采用模型返回的放行结论。
+
+### 26.2 记录最终处理结果
+
+```http
+POST /api/v1/submission-validations/{validation_id}/outcome
+```
+
+鉴权 Scope：`submission:validate`，阶段：MVP。
+
+```json
+{
+  "client_outcome_id": "01JZOUTCOME001",
+  "action": "overridden",
+  "object_type": "bug",
+  "object_id": "123",
+  "final_content_hash": "sha256:...",
+  "override_reason": "生产环境紧急故障，先建单后补充日志"
+}
+```
+
+`action` 支持 `submitted`、`revised`、`overridden`、`abandoned`。
+
+约束：
+
+- AI 服务只记录校验和最终结果，不负责创建或修改禅道对象。
+- 最终提交前，禅道必须验证校验未过期、模板未变化且 `final_content_hash` 与有效结果一致。
+- `overridden` 必须由禅道重新检查强制提交权限，并提供非空原因。
+- 禅道在创建业务对象的同一事务中保存校验关联和本地 Outbox，再可靠上报 Outcome；上报失败可重试，不能回滚已创建对象。
+- `tenant_id + validation_id + client_outcome_id` 唯一，同一校验只能形成一个有效终态；相同请求重试返回原结果，不同终态返回 `VALIDATION_OUTCOME_CONFLICT`。
+- `degraded` 是正常业务结果，使用 HTTP 200；日志必须记录降级原因。
+- 默认不长期保存完整表单原文，只保存内容哈希、结构化问题、结果和审计摘要。
+
+详细产品规则、字段模板、数据表和验收项见《Bug 与反馈提交完整性校验设计文档》；接口请求、响应和错误码以本文档为准。
