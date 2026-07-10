@@ -1,7 +1,7 @@
 # 禅道 Bug 与文档向量同步实现文档
 
-版本：v1.0  
-日期：2026-07-09  
+版本：v1.1
+日期：2026-07-10
 文档类型：开发实现文档  
 适用范围：禅道扩展、zentao-ai-service、Qdrant 向量库、Bug 相似检索、文档问答
 
@@ -179,7 +179,7 @@ AI 服务根据用户权限过滤 Qdrant
 - 没有证据时回答“未在当前资料中找到依据”。
 - 无权限文档不会被检索和引用。
 
-### 3.6 阶段 5：Bug 和文档图片处理
+### 3.6 阶段 5：Bug 和文档图片处理（V1.1）
 
 目标：
 
@@ -374,12 +374,16 @@ MVP 先做两种触发：
 
 ```http
 POST /api/v1/sync/zentao/object
-Authorization: Bearer <service_token>
+X-Client-Id: zentao_default
 X-Tenant-Id: default
+X-Actor-Type: user
 X-Zentao-User: admin
 X-Request-Id: req_xxx
 X-Timestamp: 1783580000
-X-Signature: hmac_sha256(...)
+X-Nonce: 5f7e3198-0a92-4dee-96fa-c12bb34fd509
+X-Body-SHA256: 51e7f...
+X-Signature: sha256=8d80a...
+X-Idempotency-Key: idem_xxx
 Content-Type: application/json
 ```
 
@@ -463,6 +467,8 @@ Doc payload：
 
 ## 5. AI 服务 API 设计
 
+本章只说明同步实现所需的业务字段。请求头、签名原文、通用响应、错误码和接口路径以《AI服务接口文档》为唯一契约。
+
 ### 5.1 对象同步接口
 
 ```http
@@ -481,13 +487,12 @@ POST /api/v1/sync/zentao/object
 
 ```json
 {
-  "success": true,
-  "request_id": "req_20260709_001",
+  "code": 0,
+  "msg": "success",
   "data": {
     "task_id": "task_abc123",
     "status": "queued"
-  },
-  "error": null
+  }
 }
 ```
 
@@ -501,7 +506,8 @@ GET /api/v1/index/status?object_type=bug&object_id=123
 
 ```json
 {
-  "success": true,
+  "code": 0,
+  "msg": "success",
   "data": {
     "object_type": "bug",
     "object_id": "123",
@@ -511,8 +517,7 @@ GET /api/v1/index/status?object_type=bug&object_id=123
     "chunk_count": 2,
     "last_indexed_at": "2026-07-09T16:31:00+08:00",
     "error_message": null
-  },
-  "error": null
+  }
 }
 ```
 
@@ -541,8 +546,6 @@ POST /api/v1/bugs/{id}/similar
 
 ```json
 {
-  "zentao_user": "tester01",
-  "permission_scope": ["project:8", "product:3"],
   "top_k": 10
 }
 ```
@@ -551,7 +554,8 @@ POST /api/v1/bugs/{id}/similar
 
 ```json
 {
-  "success": true,
+  "code": 0,
+  "msg": "success",
   "data": {
     "items": [
       {
@@ -564,8 +568,7 @@ POST /api/v1/bugs/{id}/similar
         "evidence": "复现步骤和 403 错误相似"
       }
     ]
-  },
-  "error": null
+  }
 }
 ```
 
@@ -579,9 +582,7 @@ POST /api/v1/docs/{id}/ask
 
 ```json
 {
-  "zentao_user": "pm01",
   "question": "Token 过期后系统怎么处理？",
-  "permission_scope": ["project:8", "product:3"],
   "top_k": 8
 }
 ```
@@ -590,7 +591,8 @@ POST /api/v1/docs/{id}/ask
 
 ```json
 {
-  "success": true,
+  "code": 0,
+  "msg": "success",
   "data": {
     "answer": "根据文档，Token 过期后系统会先尝试刷新 Token，刷新失败后跳转登录页。",
     "sources": [
@@ -603,8 +605,7 @@ POST /api/v1/docs/{id}/ask
         "snippet": "当用户 Token 过期时，系统应尝试刷新 Token..."
       }
     ]
-  },
-  "error": null
+  }
 }
 ```
 
@@ -889,7 +890,7 @@ OCR 文本：{ocr_text}
 图片描述：{image_caption}
 ```
 
-MVP 可以先只做 OCR，`image_caption` 可为空。后续接视觉模型后补充描述。
+V1.1 可以先只做 OCR，`image_caption` 可为空。后续接视觉模型后补充描述。
 
 ## 10. 模型调用与网关
 
@@ -989,7 +990,7 @@ vector = embedding.embed(
 
 ### 10.5 视觉模型接口
 
-图片理解能力可选，MVP 可以先只做 OCR。
+图片理解能力可选，V1.1 可以先只做 OCR。
 
 后续如接多模态模型，必须通过内部接口：
 
@@ -1070,7 +1071,7 @@ MVP 可以先简单重建，后续再优化 hash 跳过。
 
 ### 12.1 同步时写入权限范围
 
-禅道侧必须传：
+禅道侧必须传下列权限 metadata，用于缩小 Qdrant 候选范围和提高检索效率：
 
 ```json
 {
@@ -1092,7 +1093,7 @@ MVP 可以先简单重建，后续再优化 hash 跳过。
 
 - `tenant_id = 当前租户`
 - `deleted = false`
-- `permission_scope` 与当前用户权限范围有交集
+- `permission_scope` 与当前用户权限范围有交集，作为候选预过滤条件
 
 相似 Bug 检索额外过滤：
 
@@ -1106,9 +1107,11 @@ MVP 可以先简单重建，后续再优化 hash 跳过。
 
 ### 12.3 权限兜底
 
-即使向量检索返回结果，AI 服务返回给禅道前仍应校验来源对象权限。
+`permission_scope` 只是检索预过滤 metadata，不是授权依据。AI 服务不能信任请求正文中的用户名、角色或权限范围。
 
-MVP 可以通过禅道传入的 `permission_scope` 过滤；后续增加 AI 服务回调禅道校验对象权限。
+首批 MVP 必须在候选内容进入 Prompt 前，调用禅道批量权限校验接口逐个确认当前用户对来源对象的读取权限；私有文档还必须同时校验文档库和文档 ACL。权限接口超时、返回不明确、ACL 版本落后或候选对象未完成校验时默认拒绝访问。读取已有 AI 结果和引用时也必须重新校验当前权限。
+
+本节以《AI服务接口文档》第 5 章和第 18.1 节为最终契约。
 
 ## 13. 异常和重试
 
@@ -1419,18 +1422,13 @@ Bug：
 - 单文档问答可用。
 - 回答带引用来源。
 
-图片：
-
-- Bug 图片可 OCR。
-- 文档图片可 OCR。
-- 图片 OCR 结果作为 image chunk 入库。
-- 图片引用可跳回源文件或源文档。
-
 安全：
 
-- API 有鉴权。
-- 检索有权限过滤。
-- 无权限对象不返回。
+- API 使用 HMAC 鉴权并防止 Nonce 重放。
+- `permission_scope` 只做向量候选预过滤。
+- 所有候选来源在进入 Prompt 前通过禅道批量接口完成对象级权限校验。
+- 权限不明确、权限服务不可用或 ACL 版本落后时默认拒绝。
+- 无权限对象不进入 Prompt、不返回、不出现在已有结果中。
 - Token 和 API Key 不暴露到前端。
 
 运维：
@@ -1454,8 +1452,9 @@ Bug：
 
 优先顺序：
 
-1. 客户反馈分类。
-2. Bug AI 分析完整输出。
-3. 项目范围问答。
+1. Bug AI 分析完整输出和仅添加评论的人工确认写回。
+2. 客户反馈分类和 Bug/需求草稿。
+3. 项目范围知识问答、统一多轮聊天和通用推荐。
 4. 项目风险周报。
-5. 版本发布风险检查。
+5. 模型管理后台、审计与用量页面。
+6. 版本发布风险检查。

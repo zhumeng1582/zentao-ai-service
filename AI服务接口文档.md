@@ -1,6 +1,8 @@
 # zentao-ai-service 接口文档
 
-版本：v1.0
+版本：v1.1
+
+日期：2026-07-10
 
 状态：接口设计基线
 
@@ -45,10 +47,11 @@
 | 索引 | 状态、重试、重建 | MVP |
 | 任务 | 查询异步任务 | MVP |
 | Bug | 相似 Bug、Bug AI 分析 | MVP |
-| 文档 | 摘要、单文档问答、项目问答 | MVP/增强 |
-| 聊天 | 会话、消息、流式回答、历史消息 | MVP |
-| 推荐 | 相似 Bug、文档、需求和跨类型内容推荐 | MVP/增强 |
-| AI 结果 | 查询、采纳、驳回、写回 | MVP/增强 |
+| 文档 | 摘要、单文档问答 | MVP |
+| 项目知识问答 | 项目范围跨对象问答 | V1.1 |
+| 聊天 | 会话、消息、流式回答、历史消息 | V1.1 |
+| 推荐 | 文档、需求和跨类型内容通用推荐 | V1.1 |
+| AI 结果 | 查询、采纳、驳回、添加评论写回 | MVP |
 | 反馈 | 分类、生成 Bug/需求草稿 | V1.1 |
 | 项目 | 风险周报 | V1.1 |
 | 模型管理 | 查询、配置、连通性测试 | V1.1 |
@@ -71,23 +74,23 @@
 | POST | `/api/v1/bugs/{bug_id}/analyze` | `bug:analyze` | MVP |
 | POST | `/api/v1/docs/{doc_id}/summary` | `doc:summary` | MVP |
 | POST | `/api/v1/docs/{doc_id}/ask` | `doc:ask` | MVP |
-| POST | `/api/v1/projects/{project_id}/ask` | `project:ask` | 增强 |
-| POST | `/api/v1/conversations` | `chat:create` | MVP |
-| GET | `/api/v1/conversations` | 会话所有者 | MVP |
-| GET | `/api/v1/conversations/{conversation_id}` | 会话所有者 | MVP |
-| PATCH | `/api/v1/conversations/{conversation_id}` | 会话所有者 | MVP |
-| DELETE | `/api/v1/conversations/{conversation_id}` | 会话所有者 | MVP |
-| POST | `/api/v1/conversations/{conversation_id}/messages` | `chat:send` | MVP |
-| GET | `/api/v1/conversations/{conversation_id}/messages` | 会话所有者 | MVP |
-| POST | `/api/v1/conversations/{conversation_id}/messages/{message_id}/feedback` | 会话所有者 | MVP |
-| POST | `/api/v1/recommendations/similar` | `recommendation:read` | MVP |
+| POST | `/api/v1/projects/{project_id}/ask` | `project:ask` | V1.1 |
+| POST | `/api/v1/conversations` | `chat:create` | V1.1 |
+| GET | `/api/v1/conversations` | 会话所有者 | V1.1 |
+| GET | `/api/v1/conversations/{conversation_id}` | 会话所有者 | V1.1 |
+| PATCH | `/api/v1/conversations/{conversation_id}` | 会话所有者 | V1.1 |
+| DELETE | `/api/v1/conversations/{conversation_id}` | 会话所有者 | V1.1 |
+| POST | `/api/v1/conversations/{conversation_id}/messages` | `chat:send` | V1.1 |
+| GET | `/api/v1/conversations/{conversation_id}/messages` | 会话所有者 | V1.1 |
+| POST | `/api/v1/conversations/{conversation_id}/messages/{message_id}/feedback` | 会话所有者 | V1.1 |
+| POST | `/api/v1/recommendations/similar` | `recommendation:read` | V1.1 |
 | POST | `/api/v1/feedback/{feedback_id}/classify` | `feedback:classify` | V1.1 |
 | POST | `/api/v1/projects/{project_id}/risk-reports` | `project:risk-report:create` | V1.1 |
 | GET | `/api/v1/ai-results` | 源对象读取权限 | MVP |
 | GET | `/api/v1/ai-results/{result_id}` | 源对象读取权限 | MVP |
 | POST | `/api/v1/ai-results/{result_id}/accept` | 确认权限 | MVP |
 | POST | `/api/v1/ai-results/{result_id}/reject` | 确认权限 | MVP |
-| POST | `/api/v1/ai-results/{result_id}/writeback` | `ai-result:writeback` | 增强 |
+| POST | `/api/v1/ai-results/{result_id}/writeback` | `ai-result:writeback` | MVP（仅添加评论） |
 | GET | `/api/v1/admin/model-configs` | 管理员 | V1.1 |
 | POST | `/api/v1/admin/model-configs` | 管理员 | V1.1 |
 | PATCH | `/api/v1/admin/model-configs/{config_id}` | 管理员 | V1.1 |
@@ -1041,7 +1044,7 @@ POST /api/v1/docs/{doc_id}/ask
 POST /api/v1/projects/{project_id}/ask
 ```
 
-鉴权 Scope：`project:ask`，阶段：增强版。
+鉴权 Scope：`project:ask`，阶段：V1.1。
 
 请求：
 
@@ -1281,11 +1284,6 @@ POST /api/v1/ai-results/{result_id}/writeback
     {
       "type": "add_comment",
       "content": "AI 分析：该问题可能与权限回调失败有关。"
-    },
-    {
-      "type": "update_field",
-      "field": "pri",
-      "value": "2"
     }
   ],
   "expected_source_revision": "90001"
@@ -1294,6 +1292,8 @@ POST /api/v1/ai-results/{result_id}/writeback
 
 处理规则：
 
+- 首批 MVP 的 `actions` 只允许 `add_comment`，字段修改、创建对象和发布报告进入 V1.1 或后续版本。
+- 评论内容必须经过用户确认，并记录 AI 原始结果与用户最终提交内容。
 - 只有 `accepted` 状态的结果允许写回。
 - AI 服务不能直接写禅道数据库，必须调用禅道受保护的写回接口。
 - 禅道在执行每个动作前重新检查当前用户权限和对象版本。
@@ -1658,7 +1658,7 @@ Retry-After: 30
 
 ## 25. 聊天、相似内容推荐与历史消息
 
-本章定义统一的多轮聊天和推荐接口。第 12 章的文档问答、项目问答是面向特定页面的快捷接口；新页面和需要保存历史记录的功能应优先使用本章的 Conversation API。
+本章定义 V1.1 的统一多轮聊天和推荐接口。第 12 章的单文档问答是首批 MVP 面向特定页面的快捷接口；项目问答、保存历史记录的统一会话和通用跨类型推荐在 V1.1 实现，并复用首批 MVP 已完成的检索、权限和引用能力。
 
 ### 25.1 会话模型
 
@@ -1688,11 +1688,11 @@ Retry-After: 30
 
 | 类型 | 说明 | 阶段 |
 | --- | --- | --- |
-| `doc` | 仅检索指定文档 | MVP |
-| `bug` | 围绕指定 Bug，可检索授权的相似 Bug 和关联文档 | MVP |
-| `project` | 检索指定项目内用户有权访问的对象 | MVP |
-| `mixed` | 显式指定多个对象或对象类型 | 增强 |
-| `global` | 跨所有已授权项目和产品检索 | 增强，默认关闭 |
+| `doc` | 仅检索指定文档 | V1.1 |
+| `bug` | 围绕指定 Bug，可检索授权的相似 Bug 和关联文档 | V1.1 |
+| `project` | 检索指定项目内用户有权访问的对象 | V1.1 |
+| `mixed` | 显式指定多个对象或对象类型 | V1.2 |
+| `global` | 跨所有已授权项目和产品检索 | V1.2，默认关闭 |
 
 规则：
 
@@ -2124,7 +2124,7 @@ POST /api/v1/recommendations/similar
 规则：
 
 - `seed.type=object` 时必须先校验种子对象读取权限。
-- `seed.type=text` 时必须显式指定项目、产品或会话范围，MVP 不允许无范围全局检索。
+- `seed.type=text` 时必须显式指定项目、产品或会话范围，V1.1 不允许无范围全局检索。
 - `target_object_types` 必须是租户启用的对象类型。
 - 种子对象本身必须从结果中排除。
 - 推荐候选必须逐个完成禅道对象级权限校验。

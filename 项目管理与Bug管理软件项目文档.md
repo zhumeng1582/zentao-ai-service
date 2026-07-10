@@ -1,7 +1,7 @@
 # 基于禅道的 AI 项目管理与客户反馈分析系统项目文档
 
-版本：v1.0  
-日期：2026-07-09  
+版本：v1.1
+日期：2026-07-10
 项目方向：基于中文开源项目管理平台禅道，建设独立 AI 分析服务，通过禅道扩展页面嵌入 AI 能力，实现项目流程把控、文档问答、客户反馈分析、Bug 智能分析和版本风险预警。
 
 ## 1. 项目概述
@@ -70,8 +70,11 @@ AI 服务负责智能分析能力：
 - 不把大模型、向量库、任务队列直接塞进禅道 PHP 应用。
 - 不让 AI 自动关闭 Bug、自动改状态、自动发布版本。
 - 不做全量效能平台和复杂 BI。
+- 不做客户反馈 AI 分类、项目风险周报和项目范围知识问答，这些能力进入 V1.1。
+- 不做模型管理后台，模型参数先通过 AI 服务端配置注入。
+- 不写回自定义字段，用户确认后仅允许添加评论。
 
-第一阶段 AI 只做“辅助分析 + 人工确认”。
+第一阶段 AI 只做“Bug 与单文档辅助分析 + 对象级权限校验 + 人工确认”。
 
 ## 3. 底座选型
 
@@ -650,7 +653,7 @@ OCR 识别图片文字
 写入向量库
 ```
 
-MVP 图片能力：
+V1.1 图片能力：
 
 - OCR 识别截图中的错误码、异常文本、按钮文案、接口路径。
 - 图片 chunk 保留 `file_id`、`source_url`、所属对象和权限范围。
@@ -778,46 +781,39 @@ MVP 图片能力：
 - 发布检查清单。
 - 发布前自动报告。
 
-## 11. MVP 范围
+## 11. 首批 MVP 范围
 
-第一版只做 4 个闭环。
+第一版只做 2 个业务闭环和一组必需的基础能力。
 
-### 11.1 客户反馈自动分析
-
-能力：
-
-- 单条反馈分类。
-- 相似反馈检索。
-- 推荐关联 Bug/需求。
-- 一键生成 Bug/需求草稿。
-
-### 11.2 Bug 智能分析
+### 11.1 Bug 智能分析
 
 能力：
 
 - 相似 Bug 检索。
 - 复现步骤整理。
 - 优先级/严重程度建议。
-- 分析结果写入评论或 AI 面板。
+- 分析结果展示在 AI 面板；用户确认后可添加评论。
 
-### 11.3 文档问答与缺口检查
+### 11.2 单文档摘要与问答
 
 能力：
 
-- 项目文档索引。
+- Bug 与文档索引。
 - 单文档摘要。
-- 项目文档问答。
-- PRD 缺口检查。
+- 单文档问答。
+- 引用来源和无证据提示。
 
-### 11.4 项目风险周报
+### 11.3 必需基础能力
 
 能力：
 
-- 延期任务统计。
-- 阻塞任务识别。
-- 严重 Bug 趋势。
-- 本周客户反馈 Top 问题。
-- AI 生成项目风险报告。
+- HMAC 服务鉴权、Nonce 防重放、租户隔离和幂等。
+- 禅道批量对象级权限回调；`permission_scope` 只做候选预过滤。
+- PostgreSQL、Redis/Celery、Qdrant 和基础模型网关。
+- 同步状态、任务查询、失败重试、调用审计和基础运维日志。
+- AI 结果查询、采纳、驳回和仅添加评论的写回。
+
+客户反馈分类、项目风险周报、项目范围知识问答、统一多轮聊天、通用推荐和模型管理后台进入 V1.1。
 
 ## 12. 用户流程
 
@@ -1064,11 +1060,11 @@ API 使用 REST 风格，统一 JSON 返回。
 
 ```text
 POST /api/v1/bugs/123/analyze
-GET  /api/v1/bugs/123/similar
+POST /api/v1/bugs/123/similar
 POST /api/v1/docs/88/ask
 POST /api/v1/feedback/56/classify
-POST /api/v1/projects/9/risk-report
-POST /api/v1/sync/zentao/webhook
+POST /api/v1/projects/9/risk-reports
+POST /api/v1/sync/zentao/object
 GET  /api/v1/tasks/{task_id}
 ```
 
@@ -1076,10 +1072,9 @@ GET  /api/v1/tasks/{task_id}
 
 ```json
 {
-  "success": true,
-  "request_id": "req_20260709_001",
-  "data": {},
-  "error": null
+  "code": 0,
+  "msg": "success",
+  "data": {}
 }
 ```
 
@@ -1087,12 +1082,10 @@ GET  /api/v1/tasks/{task_id}
 
 ```json
 {
-  "success": false,
-  "request_id": "req_20260709_002",
-  "data": null,
-  "error": {
-    "code": "PERMISSION_DENIED",
-    "message": "用户无权访问该项目数据",
+  "code": 40302,
+  "msg": "PERMISSION_DENIED",
+  "data": {
+    "request_id": "req_20260709_002",
     "details": {}
   }
 }
@@ -1102,7 +1095,8 @@ GET  /api/v1/tasks/{task_id}
 
 ```json
 {
-  "success": true,
+  "code": 0,
+  "msg": "success",
   "data": {
     "task_id": "task_abc123",
     "status": "queued"
@@ -1115,22 +1109,27 @@ GET  /api/v1/tasks/{task_id}
 禅道扩展调用 AI 服务时必须带鉴权信息：
 
 ```http
-Authorization: Bearer <service_token>
+X-Client-Id: zentao_company_001
 X-Tenant-Id: company_001
+X-Actor-Type: user
 X-Zentao-User: zhangsan
-X-Request-Id: req_xxx
-X-Signature: hmac_sha256(...)
 X-Timestamp: 1783580000
+X-Nonce: 5f7e3198-0a92-4dee-96fa-c12bb34fd509
+X-Request-Id: req_xxx
+X-Body-SHA256: 51e7f...
+X-Signature: sha256=8d80a...
 ```
 
 要求：
 
-- `service_token` 用于服务鉴权。
+- `X-Client-Id` 对应 AI 服务保存的 Client 和轮换密钥。
 - `X-Zentao-User` 标识当前禅道用户。
 - `X-Tenant-Id` 标识租户。
-- `X-Signature` 防止伪造请求。
-- `X-Timestamp` 防止重放攻击。
+- `X-Signature` 按《AI服务接口文档》的 canonical request 使用 HMAC-SHA256 计算。
+- `X-Timestamp + X-Nonce` 防止重放攻击，修改类接口还必须携带 `X-Idempotency-Key`。
 - AI 服务根据用户权限过滤数据，不信任前端传入的对象内容。
+
+请求头、签名、响应结构和错误码均以《AI服务接口文档》为唯一契约。
 
 ### 16.6 数据同步规范
 
@@ -1325,7 +1324,7 @@ vision.describe(
 )
 ```
 
-MVP 可以先不启用视觉模型，只使用 OCR 生成 image chunk。
+V1.1 可以先不启用视觉模型，只使用 OCR 生成 image chunk。
 
 要求：
 
@@ -1336,7 +1335,7 @@ MVP 可以先不启用视觉模型，只使用 OCR 生成 image chunk。
 - 失败时支持重试和降级。
 - API Key 必须加密存储，日志不得输出明文密钥。
 - Embedding 模型和聊天模型分开配置，避免用聊天模型承担向量任务。
-- 图片理解能力可选，MVP 可先只做 OCR。
+- 图片理解能力可选，V1.1 可先只做 OCR。
 - 模型切换只能影响模型配置或 adapter，不应要求修改业务模块代码。
 - 模型调用失败必须写入调用日志和任务错误状态。
 
@@ -1471,7 +1470,9 @@ written_back
 必须遵守：
 
 - AI 服务不能绕过禅道权限。
-- 向量检索必须按 `tenant_id + permission_scope` 过滤。
+- 向量检索必须按 `tenant_id + permission_scope` 做候选预过滤，但 `permission_scope` 不是授权依据。
+- 候选内容进入 Prompt 前必须回调禅道批量权限接口逐个校验对象读取权限。
+- 权限接口不可用、结果不明确或 ACL 版本落后时默认拒绝访问。
 - 外部模型调用前可配置脱敏。
 - API Key 加密存储。
 - 日志中不输出完整敏感文本和密钥。
@@ -1576,21 +1577,22 @@ DEFAULT_EMBEDDING_MODEL=bge-m3
 - 禅道同步模块。
 - Bug 向量化。
 - 文档向量化。
-- 图片 OCR 和 image chunk 入库。
-- 客户反馈向量化。
 - Bug 相似检索 API。
-- 文档问答 API。
-- 客户反馈分类 API。
-- 项目风险周报 API。
+- Bug AI 分析 API。
+- 单文档摘要和问答 API。
 - AI 分析结果表。
 - AI 异步任务表。
-- 模型配置和模型网关。
+- 通过服务端配置注入的基础模型网关。
 - 索引状态查询 API。
 - 失败任务重试 API。
-- 统一鉴权。
+- HMAC 鉴权、Nonce 防重放、幂等和租户隔离。
+- 禅道批量对象级权限校验接口联调。
+- AI 结果采纳、驳回和仅添加评论的写回。
 - 统一日志。
 - 调用审计和 token 统计。
 - Docker Compose 部署。
+
+图片 OCR、客户反馈向量化与分类、项目周报、项目知识问答、模型管理后台和统一聊天不属于首批 MVP 技术交付。
 
 ## 17. 实施路线
 
@@ -1599,7 +1601,7 @@ DEFAULT_EMBEDDING_MODEL=bge-m3
 目标：
 
 - 部署禅道开源版。
-- 验证 `extension/custom` 能否在 Bug、文档、项目页面插入 AI 面板。
+- 验证 `extension/custom` 能否在 Bug、文档页面插入 AI 面板。
 - 验证禅道 API 或数据库只读同步。
 - 验证 AI 服务调用大模型和向量库。
 
@@ -1614,10 +1616,10 @@ DEFAULT_EMBEDDING_MODEL=bge-m3
 
 目标：
 
-- 同步 Bug、需求、文档、反馈、测试用例。
+- 同步 Bug 和文档。
 - 建立增量同步机制。
 - 建立向量库入库和更新策略。
-- 做权限 metadata。
+- 写入权限 metadata，并完成禅道批量对象级权限回调。
 
 交付：
 
@@ -1630,17 +1632,16 @@ DEFAULT_EMBEDDING_MODEL=bge-m3
 
 目标：
 
-- 客户反馈自动分类。
 - Bug 相似检索和优先级建议。
-- 文档问答。
-- 项目风险周报。
+- 单文档摘要和问答。
+- AI 结果采纳、驳回和仅添加评论的写回。
 
 交付：
 
 - 禅道 AI 扩展入口。
 - AI 服务 API。
 - AI 分析结果表。
-- 项目周报。
+- Bug 与文档 AI 面板。
 
 ### 17.4 阶段 3：试点运行，4 周
 
