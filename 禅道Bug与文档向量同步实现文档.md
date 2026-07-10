@@ -1,6 +1,6 @@
 # 禅道 Bug 与文档向量同步实现文档
 
-版本：v1.4
+版本：v1.5
 日期：2026-07-10
 文档类型：开发实现文档  
 适用范围：禅道扩展、zentao-ai-service、Qdrant 向量库、Bug 相似检索、文档问答
@@ -195,6 +195,7 @@ AI 服务根据用户权限过滤 Qdrant
 - 全局悬浮入口与聊天弹窗。
 - Conversation、Message、Message Source 数据模型和 API。
 - `help`、`bug`、`doc`、`feedback` 四种 MVP 会话范围。
+- 禅道 `POST /api/ai/v1/source-objects/batch-get` 反馈实时取数接口和 `ai_chat` 字段 Profile。
 - 独立的平台帮助知识集合或带强制 `knowledge_domain=platform_help` 过滤的逻辑分区。
 - SSE 流式响应、停止生成和历史消息恢复。
 
@@ -202,6 +203,7 @@ AI 服务根据用户权限过滤 Qdrant
 
 - 任一登录后的业务页面可以打开和关闭聊天弹窗，不刷新或阻断主页面。
 - Bug、文档、反馈会话不能通过追问扩大到其他对象；页面上下文由禅道服务端生成并签名。
+- 反馈字段读取与权限检查在同一内部请求完成，拒绝浏览器直接上传反馈正文作为可信上下文。
 - `help` 会话不能检索项目、Bug、文档、反馈等业务数据。
 - 每次发送消息和读取历史时重新校验对象权限，失去权限的消息与引用变为 `restricted`。
 - AI 服务异常只影响聊天弹窗，禅道原页面可继续使用。
@@ -817,6 +819,75 @@ MVP 建议直接删除旧 point 后重建。
 - 优先更新 payload：`deleted=true`。
 - 检索时过滤 `deleted=false`。
 
+### 7.5 平台帮助知识集合
+
+MVP 的 `help` 会话只使用随 AI 服务发布、经过审核的平台帮助资料，不提供前端上传页面。
+
+建议目录：
+
+```text
+knowledge/platform_help/
+├── manifest.json
+└── docs/
+    ├── bug.md
+    ├── feedback.md
+    ├── document.md
+    └── project.md
+```
+
+`manifest.json` 每条记录包含：
+
+- `doc_id`：稳定文档 ID。
+- `title`：展示标题。
+- `source_path`：仓库内相对路径。
+- `version`：内容版本。
+- `status`：只有 `approved` 才能发布，`draft/retired` 不进入检索。
+- `locale`：例如 `zh-CN`。
+- `zentao_min_version`、`zentao_max_version`：适用禅道版本。
+- `edition`：适用开源版/企业版。
+- `checksum`：文件 SHA-256。
+
+示例：
+
+```json
+{
+  "manifest_version": "2026.07.10.1",
+  "documents": [
+    {
+      "doc_id": "help-bug-create",
+      "title": "如何提交 Bug",
+      "source_path": "docs/bug.md",
+      "version": "1.0.0",
+      "status": "approved",
+      "locale": "zh-CN",
+      "zentao_min_version": "22.3",
+      "zentao_max_version": "22.3",
+      "edition": "open_source",
+      "checksum": "sha256:..."
+    }
+  ]
+}
+```
+
+导入命令约定：
+
+```text
+python -m app.cli help-kb validate --manifest knowledge/platform_help/manifest.json
+python -m app.cli help-kb sync --manifest knowledge/platform_help/manifest.json
+```
+
+实现规则：
+
+- `validate` 检查清单字段、文件存在性、Checksum、重复 `doc_id`、非法外链和草稿状态，不写数据库或 Qdrant。
+- `sync` 只处理 `approved` 文档，解析 Markdown、按标题切片并生成 Embedding。
+- Chunk metadata 至少包含 `knowledge_domain=platform_help`、`doc_id`、`title`、`version`、`locale`、`edition`、适用禅道版本和 `source_url`。
+- 稳定 Chunk ID 使用 `help:{doc_id}:{version}:{chunk_index}`；新版本成功入库后再切换当前版本，避免半更新状态。
+- Manifest 删除或标记 `retired` 的文档从当前检索版本移除，历史审计保留最小记录。
+- 建议使用实际集合 `zentao_platform_help_{embedding_revision}` 和别名 `zentao_platform_help`；Embedding 维度变化时构建新集合并原子切换别名。
+- `help` 检索强制增加 `knowledge_domain=platform_help`、语言、版本和 Edition 过滤，不能接受浏览器覆盖这些过滤条件。
+- 平台帮助源文件不得包含客户 Bug、反馈、项目文档、账号、密钥或其他租户业务数据。
+- 每次同步保存 Manifest 版本、执行人、文档数、Chunk 数、Checksum、模型版本和失败原因。
+
 ## 8. Bug 文本构建规则
 
 Bug 通常整条作为一个 text chunk。
@@ -1369,6 +1440,21 @@ extension/custom/doc/ext/ui/view.ai.html.hook.php
 
 - 文档详情页提问能返回答案和引用来源。
 
+### 步骤 10.1：初始化平台帮助知识库
+
+任务：
+
+- 建立 Manifest 和审核后的 Markdown 帮助资料目录。
+- 实现 `help-kb validate` 和 `help-kb sync` 命令。
+- 建立独立帮助集合/别名和强制 `knowledge_domain` 过滤。
+- 保存导入版本、Checksum、模型版本和执行审计。
+
+完成标准：
+
+- 使用禅道 22.3、中文、开源版条件能够检索对应帮助内容。
+- 草稿、退役和不适用版本的资料不能进入结果。
+- `help` 会话不能返回任何租户业务对象。
+
 ### 步骤 11：实现图片 OCR
 
 任务：
@@ -1455,6 +1541,7 @@ Bug：
 - `help`、`bug`、`doc`、`feedback` 范围支持连续追问、流式回答和历史恢复。
 - Bug、文档、反馈页面自动绑定当前对象，其他页面只检索平台帮助知识。
 - 平台帮助知识与业务向量逻辑隔离，`help` 会话不能返回业务数据。
+- 平台帮助 Manifest 校验、增量同步、版本切换和退役删除可重复执行且有审计记录。
 - 弹窗或 AI 服务异常不影响禅道原页面操作。
 
 安全：

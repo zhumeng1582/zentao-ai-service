@@ -1,6 +1,6 @@
 # 基于禅道的 AI 项目管理与客户反馈分析系统项目文档
 
-版本：v1.4
+版本：v1.5
 日期：2026-07-10
 项目方向：基于中文开源项目管理平台禅道，建设独立 AI 分析服务，通过禅道扩展页面嵌入 AI 能力，实现项目流程把控、文档问答、客户反馈分析、Bug 智能分析和版本风险预警。
 
@@ -382,6 +382,7 @@ POST /api/project/{id}/risk-report
 POST /api/release/{id}/quality-report
 POST /api/sync/object
 POST /api/webhook/zentao
+POST /api/ai/v1/source-objects/batch-get
 ```
 
 ## 8. 数据同步设计
@@ -396,7 +397,7 @@ POST /api/webhook/zentao
 - Bug：标题、复现步骤、严重程度、优先级、影响版本、修复版本、状态。
 - 测试用例：标题、步骤、预期结果、执行结果。
 - 文档：标题、正文、附件、目录、关联项目。
-- 客户反馈：反馈内容、客户、来源、模块、处理状态。
+- 客户反馈：禅道 22.3 原生标题、描述、类型、优先级、产品、模块、来源、反馈者、处理状态；客户/设备/固件等使用白名单自定义字段。
 - 评论：关键讨论、结论、变更说明。
 - 操作记录：创建、修改、状态流转、指派、关闭。
 
@@ -841,6 +842,7 @@ V1.1 图片能力：
 - 校验结果绑定内容哈希，用户修改表单后旧结果失效。
 - AI 失败时降级为固定规则校验，不能丢失表单内容或阻断核心业务。
 - 详细实现以《Bug 与反馈提交完整性校验设计文档》和《AI服务接口文档》为准。
+- 禅道 22.3 字段名、原生必填、反馈类型、Hook 和哈希规则以《禅道 22.3 集成与字段映射文档》为准。
 
 客户反馈分类、项目风险周报、项目范围及跨对象问答、通用推荐和模型管理后台进入 V1.1。
 
@@ -1580,6 +1582,7 @@ AI 质量测试集：
 
 - 50 条历史 Bug。
 - 50 条客户反馈。
+- 提交校验进入 `enforce` 前扩充到至少 100 条 Bug 和 100 条反馈，并覆盖完整、关键缺失、表达含糊样本。
 - 20 篇项目文档。
 - 10 个真实项目周报样例。
 
@@ -1601,7 +1604,8 @@ DATABASE_URL=postgresql://user:pass@postgres:5432/ai_service
 REDIS_URL=redis://redis:6379/0
 QDRANT_URL=http://qdrant:6333
 ZENTAO_BASE_URL=http://zentao
-ZENTAO_SERVICE_TOKEN=******
+ZENTAO_CALLBACK_CLIENT_ID=ai_service_company_001
+ZENTAO_CALLBACK_CLIENT_SECRET=******
 LLM_PROVIDER=openai_compatible
 LLM_BASE_URL=https://model.example.com/v1
 LLM_API_KEY=******
@@ -1638,6 +1642,9 @@ DEFAULT_EMBEDDING_MODEL=bge-m3
 - `help`、`bug`、`doc`、`feedback` 范围的会话、消息、历史消息和流式回答 API。
 - 会话、消息、引用和反馈数据表。
 - 与业务向量数据隔离的平台帮助知识库。
+- 平台帮助 Manifest、审核状态、导入命令、版本过滤和发布审计。
+- 反馈详情页实时源对象批量读取接口。
+- 禅道 22.3 Bug/反馈字段适配、内容哈希和提交校验服务端桥接。
 - AI 分析结果表。
 - AI 异步任务表。
 - 通过服务端配置注入的基础模型网关。
