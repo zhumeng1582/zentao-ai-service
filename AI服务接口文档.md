@@ -1,6 +1,6 @@
 # zentao-ai-service 接口文档
 
-版本：v1.1
+版本：v1.2
 
 日期：2026-07-10
 
@@ -49,7 +49,7 @@
 | Bug | 相似 Bug、Bug AI 分析 | MVP |
 | 文档 | 摘要、单文档问答 | MVP |
 | 项目知识问答 | 项目范围跨对象问答 | V1.1 |
-| 聊天 | 会话、消息、流式回答、历史消息 | V1.1 |
+| 全局 AI 客服 | `help`、Bug、文档范围会话、消息、流式回答、历史消息 | MVP |
 | 推荐 | 文档、需求和跨类型内容通用推荐 | V1.1 |
 | AI 结果 | 查询、采纳、驳回、添加评论写回 | MVP |
 | 反馈 | 分类、生成 Bug/需求草稿 | V1.1 |
@@ -75,14 +75,14 @@
 | POST | `/api/v1/docs/{doc_id}/summary` | `doc:summary` | MVP |
 | POST | `/api/v1/docs/{doc_id}/ask` | `doc:ask` | MVP |
 | POST | `/api/v1/projects/{project_id}/ask` | `project:ask` | V1.1 |
-| POST | `/api/v1/conversations` | `chat:create` | V1.1 |
-| GET | `/api/v1/conversations` | 会话所有者 | V1.1 |
-| GET | `/api/v1/conversations/{conversation_id}` | 会话所有者 | V1.1 |
-| PATCH | `/api/v1/conversations/{conversation_id}` | 会话所有者 | V1.1 |
-| DELETE | `/api/v1/conversations/{conversation_id}` | 会话所有者 | V1.1 |
-| POST | `/api/v1/conversations/{conversation_id}/messages` | `chat:send` | V1.1 |
-| GET | `/api/v1/conversations/{conversation_id}/messages` | 会话所有者 | V1.1 |
-| POST | `/api/v1/conversations/{conversation_id}/messages/{message_id}/feedback` | 会话所有者 | V1.1 |
+| POST | `/api/v1/conversations` | `chat:create` | MVP |
+| GET | `/api/v1/conversations` | 会话所有者 | MVP |
+| GET | `/api/v1/conversations/{conversation_id}` | 会话所有者 | MVP |
+| PATCH | `/api/v1/conversations/{conversation_id}` | 会话所有者 | MVP |
+| DELETE | `/api/v1/conversations/{conversation_id}` | 会话所有者 | MVP |
+| POST | `/api/v1/conversations/{conversation_id}/messages` | `chat:send` | MVP |
+| GET | `/api/v1/conversations/{conversation_id}/messages` | 会话所有者 | MVP |
+| POST | `/api/v1/conversations/{conversation_id}/messages/{message_id}/feedback` | 会话所有者 | MVP |
 | POST | `/api/v1/recommendations/similar` | `recommendation:read` | V1.1 |
 | POST | `/api/v1/feedback/{feedback_id}/classify` | `feedback:classify` | V1.1 |
 | POST | `/api/v1/projects/{project_id}/risk-reports` | `project:risk-report:create` | V1.1 |
@@ -1634,10 +1634,12 @@ Retry-After: 30
 4. 实现禅道批量权限校验接口。
 5. 实现 Bug 相似检索。
 6. 实现单文档问答和引用。
-7. 实现 Bug AI 分析和 AI 结果查询。
-8. 实现采纳、驳回；写回先只支持添加评论。
-9. 补充失败重试、审计日志和限流。
-10. 在权限、幂等、乱序事件和模型失败场景全部通过后再扩展反馈和项目周报。
+7. 实现 `help`、`bug`、`doc` 范围的 Conversation、历史消息和流式回答。
+8. 联调全局机器人入口、可信页面上下文和弹窗中断恢复。
+9. 实现 Bug AI 分析和 AI 结果查询。
+10. 实现采纳、驳回；写回先只支持添加评论。
+11. 补充失败重试、审计日志和限流。
+12. 在权限、幂等、乱序事件和模型失败场景全部通过后再扩展反馈、项目问答和项目周报。
 
 ## 24. MVP 验收检查
 
@@ -1652,13 +1654,24 @@ Retry-After: 30
 - 删除对象不再参与检索。
 - 相似 Bug 不返回当前 Bug 本身。
 - 文档问答无证据时明确返回 `insufficient_evidence=true`。
+- `help` 会话只能检索经过审核的平台帮助知识，不能返回项目业务数据。
+- Bug、文档会话连续追问不能扩大创建时的对象范围。
+- 流式中断后可以通过历史消息接口恢复最终状态。
+- 用户失去源对象权限后，相关历史消息返回 `restricted` 且隐藏内容和引用。
 - AI 结果写回前重新检查权限和源对象版本。
 - 模型或 AI 服务异常不影响禅道原有功能。
 - 日志不包含密钥、完整签名和未脱敏敏感信息。
 
 ## 25. 聊天、相似内容推荐与历史消息
 
-本章定义 V1.1 的统一多轮聊天和推荐接口。第 12 章的单文档问答是首批 MVP 面向特定页面的快捷接口；项目问答、保存历史记录的统一会话和通用跨类型推荐在 V1.1 实现，并复用首批 MVP 已完成的检索、权限和引用能力。
+本章同时定义首批 MVP 的全局 AI 客服会话和 V1.1 的通用推荐接口。MVP 支持 `help`、`bug`、`doc` 范围的多轮聊天、流式回答和历史消息；项目问答、混合范围和通用跨类型推荐在 V1.1 或后续版本实现。所有入口复用相同的检索、权限、引用和消息存储能力。
+
+全局入口约定：
+
+- 登录后的禅道业务页面右下角展示机器人图标，点击后在当前页面打开聊天弹窗或抽屉，不刷新主页面。
+- Bug 详情页由禅道服务端绑定 `bug` 范围，文档详情页绑定 `doc` 范围，其他页面绑定 `help` 范围。
+- 前端只能提交消息和页面入口标识；租户、用户、对象类型与对象 ID 必须由禅道服务端根据当前路由生成并签名，AI 服务不得信任前端自报范围。
+- 弹窗关闭后保留当前会话；重新打开时通过历史消息接口恢复。聊天接口失败不得阻断当前禅道页面操作。
 
 ### 25.1 会话模型
 
@@ -1688,8 +1701,9 @@ Retry-After: 30
 
 | 类型 | 说明 | 阶段 |
 | --- | --- | --- |
-| `doc` | 仅检索指定文档 | V1.1 |
-| `bug` | 围绕指定 Bug，可检索授权的相似 Bug 和关联文档 | V1.1 |
+| `help` | 仅检索经过审核的平台使用手册、FAQ 和操作说明 | MVP |
+| `doc` | 仅检索指定文档 | MVP |
+| `bug` | 围绕指定 Bug，可检索授权的相似 Bug 和关联文档 | MVP |
 | `project` | 检索指定项目内用户有权访问的对象 | V1.1 |
 | `mixed` | 显式指定多个对象或对象类型 | V1.2 |
 | `global` | 跨所有已授权项目和产品检索 | V1.2，默认关闭 |
@@ -1697,6 +1711,7 @@ Retry-After: 30
 规则：
 
 - 会话创建后不能通过发送消息扩大 `scope`。
+- `help` 与业务知识集合逻辑隔离，不能携带项目、产品或业务对象 ID。
 - 切换文档、项目或 Bug 必须创建新会话。
 - `scope` 只是检索上限，不代表用户天然拥有其中所有对象权限。
 - 每次发送消息和读取历史消息时都必须重新校验当前权限。
@@ -1760,6 +1775,21 @@ POST /api/v1/conversations
 
 鉴权 Scope：`chat:create`。
 
+平台帮助会话请求：
+
+```json
+{
+  "title": null,
+  "scope": {
+    "type": "help",
+    "allowed_object_types": ["help"]
+  },
+  "metadata": {
+    "entry_page": "task-browse"
+  }
+}
+```
+
 文档会话请求：
 
 ```json
@@ -1777,7 +1807,24 @@ POST /api/v1/conversations
 }
 ```
 
-项目会话请求：
+Bug 会话请求：
+
+```json
+{
+  "title": null,
+  "scope": {
+    "type": "bug",
+    "object_type": "bug",
+    "object_id": "123",
+    "allowed_object_types": ["bug", "doc"]
+  },
+  "metadata": {
+    "entry_page": "bug-view"
+  }
+}
+```
+
+项目会话请求（V1.1）：
 
 ```json
 {
@@ -1813,7 +1860,7 @@ POST /api/v1/conversations
 }
 ```
 
-创建时必须校验用户对绑定对象的读取权限。客户端不能提交自定义 System Prompt、模型 API Key 或绕过检索范围的指令。
+创建 Bug、文档或项目会话时必须校验用户对绑定对象的读取权限。`metadata.entry_page` 只用于审计和产品分析，不作为授权依据；禅道扩展必须根据服务端当前路由构造并签名 `scope`。客户端不能提交自定义 System Prompt、模型 API Key 或绕过检索范围的指令。
 
 ### 25.4 查询会话列表
 
@@ -2180,7 +2227,7 @@ POST /api/v1/recommendations/similar
 
 - `POST /docs/{doc_id}/ask`：无会话场景可直接问答；传入 `conversation_id` 时，必须验证该会话属于当前用户且绑定同一文档。
 - `POST /projects/{project_id}/ask`：传入会话时，必须绑定同一项目。
-- 新聊天页面优先使用 `POST /conversations/{id}/messages`。
+- 全局 AI 客服弹窗优先使用 `POST /conversations/{id}/messages`。
 - 相似 Bug 页面可继续使用 `/bugs/{id}/similar`；跨对象推荐使用 `/recommendations/similar`。
 - 两套入口必须复用同一检索、权限、引用和消息存储服务，不能分别实现不同权限逻辑。
 
@@ -2218,16 +2265,18 @@ conversation_summaries
 | `40303` | `MESSAGE_RESTRICTED` | 403 | 历史消息引用权限已失效 |
 | `42205` | `INVALID_RECOMMENDATION_SEED` | 422 | 推荐种子无效 |
 | `42206` | `RECOMMENDATION_SCOPE_REQUIRED` | 422 | 文本推荐未提供检索范围 |
+| `42207` | `INVALID_PAGE_CONTEXT` | 422 | 页面上下文缺失、与路由不一致或不支持 |
 
 ### 25.14 新增验收项
 
-- 用户可以创建文档、Bug 和项目范围的会话。
+- MVP 用户可以创建 `help`、文档和 Bug 范围的会话；项目范围会话按 V1.1 验收。
 - 连续追问不会扩大创建时的检索范围。
 - 同一 `client_message_id` 重试不会生成重复消息。
 - 流式中断后可以通过历史消息接口恢复最终状态。
 - 历史消息按会话分页并保持稳定顺序。
 - 用户失去源文档权限后，相关历史 AI 回答变为 `restricted`。
-- 相似推荐支持 Bug、文档、需求和测试用例等目标类型。
-- 推荐结果不包含种子对象自身。
-- 未授权推荐候选不会返回标题、摘要、链接或证据。
-- 文档快捷问答和统一聊天接口使用相同的权限与检索实现。
+- 全局机器人入口在登录后的业务页面可见，点击后无需刷新页面即可打开、关闭和恢复聊天弹窗。
+- Bug、文档页面自动绑定当前对象，其他页面仅使用隔离的平台帮助知识库。
+- 文档快捷问答和全局 AI 客服使用相同的权限、检索和会话实现。
+- V1.1 相似推荐支持 Bug、文档、需求和测试用例等目标类型。
+- V1.1 推荐结果不包含种子对象自身，未授权候选不会返回标题、摘要、链接或证据。
